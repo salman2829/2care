@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+package-lock.json
+
+# Production and build outputs
+dist/
+build/
+.cache/
+.vite/
+vite.config.*.timestamp-*
+*.tsbuildinfo
+
+# Environment variables & secrets (CRITICAL: NEVER COMMIT)
+.env
+.env.*
+*.env
+backend/.env
+backend/.env.*
+!.env.example
+!backend/.env.example
+
+# Local SQLite databases & temporary DB files (Contains patient/booking data)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+healthcare_ops.db*
+test_ops.db*
+backend/*.db*
+backend/healthcare_ops.db*
+backend/test_ops.db*
+
+# Binaries and executables
+*.exe
+*.dll
+cloudflared.exe
+backend/cloudflared.exe
+
+# Tunnel logs and state files
+tunnel.log
+tunnel_state.json
+backend/tunnel.log
+backend/tunnel_state.json
+
+# Python virtual environment, bytecode & caches
+.venv/
+backend/.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+backend/.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs and debug files
+logs/
+*.log
+*-debug.log*
+
+# Editor & platform temp files
+.claude-replay.*
+.tmp-*
+/.figma/design-context/
+/.plugins/
+/.opencode-skills/
+.DS_Store
+Thumbs.db

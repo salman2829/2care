@@ -1,0 +1,14 @@
+{
+  "title": "2care",
+  "description": "Streamline healthcare operations with an AI-driven dashboard for appointment management, doctor availability, and performance monitoring, enhancing efficiency for healthcare providers.",
+  "icons": {
+    "icon": "/logo.png"
+  },
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
