@@ -3,7 +3,7 @@ import {
   Calendar, Clock, User, Stethoscope, PhoneCall, Search, 
   CheckCircle2, AlertCircle, ArrowRight, ShieldCheck, MapPin, 
   CalendarCheck, Sparkles, X, ChevronRight, RefreshCw, Eye,
-  Bot, Zap, HeartPulse, Filter, UserCheck, Activity
+  Bot, Zap, HeartPulse, Filter, UserCheck, Activity, Users
 } from "lucide-react";
 import { Appointment, Doctor, PatientSummary } from "../lib/types";
 
