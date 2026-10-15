@@ -241,7 +241,11 @@ export default function VoiceCallWidget({
     try {
       const res = await tokenPromise;
       if (!res.ok || !res.data?.access_token) {
-        throw new Error(res.error || "Failed to create web call session from Retell.");
+        let errStr = res.error || "Failed to create web call session from Retell.";
+        if (errStr.includes("Failed to fetch")) {
+          errStr = "Backend is waking up or connecting. Please retry in a moment or use Demo.";
+        }
+        throw new Error(errStr);
       }
 
       const { access_token, call_id } = res.data;
