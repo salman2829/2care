@@ -3,16 +3,8 @@
 
 # ---------------------------------------------------------------------------
 # Images & Graphics
-# ---------------------------------------------------------------------------
-*.png                filter=lfs diff=lfs merge=lfs -text
-*.jpg                filter=lfs diff=lfs merge=lfs -text
-*.jpeg               filter=lfs diff=lfs merge=lfs -text
-*.gif                filter=lfs diff=lfs merge=lfs -text
-*.bmp                filter=lfs diff=lfs merge=lfs -text
-*.tiff               filter=lfs diff=lfs merge=lfs -text
-*.tif                filter=lfs diff=lfs merge=lfs -text
-*.ico                filter=lfs diff=lfs merge=lfs -text
-*.webp               filter=lfs diff=lfs merge=lfs -text
+# Standard UI web images (stored directly in git for seamless static hosting like Vercel)
+# *.png, *.jpg, *.jpeg, *.ico, *.webp are stored directly in repo
 *.psd                filter=lfs diff=lfs merge=lfs -text
 *.ai                 filter=lfs diff=lfs merge=lfs -text
 *.sketch             filter=lfs diff=lfs merge=lfs -text

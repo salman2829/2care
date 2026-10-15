@@ -28,6 +28,7 @@ import PatientPortal from "./components/PatientPortal";
 import PatientsPage from "./components/PatientsPage";
 import PatientDetailDrawer from "./components/PatientDetailDrawer";
 import { retellService, CallLogItem } from "./lib/services/retell";
+import { LOGO_BASE64 } from "./assets/logo-base64";
 
 // Fallback data for demo mode or initial offline view
 import {
@@ -87,13 +88,22 @@ function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone
 }
 
 function Logo({ size = 40 }: { size?: number }) {
+  const [hasError, setHasError] = useState(false);
+
   return (
     <div className="brand-mark" style={{ width: size, height: size }} aria-label="2care">
-      <img
-        src="/logo.png"
-        alt="2care"
-        className="brand-logo-img"
-      />
+      {!hasError ? (
+        <img
+          src={LOGO_BASE64}
+          alt="2care"
+          className="brand-logo-img"
+          onError={() => setHasError(true)}
+        />
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", color: "#56d9f2" }}>
+          <Activity size={size * 0.55} />
+        </div>
+      )}
     </div>
   );
 }
