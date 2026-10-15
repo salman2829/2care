@@ -43,19 +43,46 @@ export default function PatientPortal({
 }: PatientPortalProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<"all" | "confirmed" | "voice">("all");
+  const [viewScope, setViewScope] = useState<"all" | "patient">(() => {
+    if (!currentPatientName || currentPatientName.toLowerCase() === "all") return "all";
+    return "patient";
+  });
+  const [latestBooking, setLatestBooking] = useState<any>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("2care_latest_booking");
+        if (stored) return JSON.parse(stored);
+      } catch (e) {}
+    }
+    return null;
+  });
 
-  // Filter appointments strictly for the authenticated patient's EHR records
+  // Listen for real-time booking events across tabs & voice call sessions
+  React.useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "2care_latest_booking" && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          setLatestBooking(parsed);
+        } catch (err) {}
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  // Filter appointments according to selected scope
   const activePatientAppointments = useMemo(() => {
-    if (!currentPatientName || currentPatientName.toLowerCase() === "all") {
+    if (viewScope === "all" || !currentPatientName || currentPatientName.toLowerCase() === "all") {
       return appointments;
     }
-    const target = currentPatientName.toLowerCase();
+    const target = currentPatientName.toLowerCase().trim();
     const filtered = appointments.filter((apt) => {
-      const pName = apt.patient_name.toLowerCase();
+      const pName = apt.patient_name.toLowerCase().trim();
       return pName.includes(target) || target.includes(pName);
     });
     return filtered.length > 0 ? filtered : appointments;
-  }, [appointments, currentPatientName]);
+  }, [appointments, currentPatientName, viewScope]);
 
   const patientAppointments = useMemo(() => {
     return activePatientAppointments.filter((apt) => {
@@ -296,12 +323,167 @@ export default function PatientPortal({
 
       {/* 4. Appointments Table Panel in Admin Theme */}
       <section id="patient-appointments-panel" className="panel table-panel">
-        <div className="table-heading panel-heading">
+        {/* Real-time Confirmed Booking Banner */}
+        {latestBooking && (
+          <div
+            style={{
+              margin: "16px 20px 0 20px",
+              padding: "16px 20px",
+              borderRadius: "12px",
+              background: "linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(6, 182, 212, 0.1))",
+              border: "1.5px solid rgba(16, 185, 129, 0.4)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "16px",
+              flexWrap: "wrap",
+              boxShadow: "0 4px 16px rgba(16, 185, 129, 0.12)"
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+              <div
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: "10px",
+                  background: "#10b981",
+                  color: "#ffffff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  boxShadow: "0 2px 8px rgba(16, 185, 129, 0.35)"
+                }}
+              >
+                <CheckCircle2 size={24} />
+              </div>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", color: "#059669", textTransform: "uppercase" }}>
+                    Verified Consultation Confirmed
+                  </span>
+                  <span className="badge badge-confirmed" style={{ fontSize: "11px", padding: "2px 8px" }}>
+                    <CheckCircle2 size={11} /> {latestBooking.status || "Confirmed"}
+                  </span>
+                  <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                    Booking Ref: <strong style={{ color: "var(--foreground)" }}>{latestBooking.reference_id}</strong>
+                  </span>
+                </div>
+                <div style={{ fontSize: "14px", fontWeight: 700, color: "var(--foreground)", marginTop: "3px" }}>
+                  {latestBooking.patient_name} &bull; {latestBooking.doctor_name || "Specialist"} ({latestBooking.specialty || "Clinical Provider"})
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--muted)", marginTop: "2px", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                  <span>
+                    <Clock size={12} style={{ display: "inline", verticalAlign: "-2px", marginRight: "4px" }} />
+                    {latestBooking.scheduled_at
+                      ? new Date(latestBooking.scheduled_at).toLocaleString("en-US", {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit"
+                        })
+                      : "Scheduled visit"}
+                  </span>
+                  <span>&bull; Intake Channel: <strong style={{ color: "#0d9488" }}>{latestBooking.source || "AI Voice Assistant"}</strong></span>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              {onSelectAppointment && latestBooking.id && (
+                <button
+                  type="button"
+                  className="button button-primary small-button"
+                  onClick={() => onSelectAppointment(latestBooking.id)}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                >
+                  <Eye size={14} />
+                  <span>View Booking Details</span>
+                </button>
+              )}
+              <button
+                type="button"
+                className="button button-ghost small-button"
+                onClick={() => {
+                  setLatestBooking(null);
+                  try {
+                    localStorage.removeItem("2care_latest_booking");
+                  } catch (e) {}
+                }}
+                title="Dismiss"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="table-heading panel-heading" style={{ flexWrap: "wrap", gap: "12px" }}>
           <div>
             <span className="eyebrow">YOUR SCHEDULED VISITS</span>
             <h2>Active Appointments</h2>
-            <p>Authoritative clinic reservations synchronized in real time</p>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginTop: "4px" }}>
+              <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>
+                Authoritative clinic reservations synchronized in real time
+              </p>
+              {/* Patient Scope Selector */}
+              <div style={{ display: "inline-flex", background: "rgba(0,0,0,0.05)", borderRadius: "8px", padding: "2px" }}>
+                <button
+                  type="button"
+                  className={`button ${viewScope === "all" ? "button-primary" : "button-ghost"} small-button`}
+                  onClick={() => setViewScope("all")}
+                  style={{ padding: "4px 10px", fontSize: "11px", height: "26px" }}
+                >
+                  <Users size={12} />
+                  <span>All Clinic Bookings ({appointments.length})</span>
+                </button>
+                <button
+                  type="button"
+                  className={`button ${viewScope === "patient" ? "button-primary" : "button-ghost"} small-button`}
+                  onClick={() => setViewScope("patient")}
+                  style={{ padding: "4px 10px", fontSize: "11px", height: "26px" }}
+                >
+                  <User size={12} />
+                  <span>
+                    My Records ({currentPatientName && currentPatientName.toLowerCase() !== "all" ? currentPatientName : "Filtered"})
+                  </span>
+                </button>
+              </div>
+
+              {availablePatients && availablePatients.length > 0 && (
+                <select
+                  value={currentPatientName || "All"}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (onSwitchPatient) onSwitchPatient(val);
+                    if (val === "All") setViewScope("all");
+                    else setViewScope("patient");
+                  }}
+                  className="patient-select-input"
+                  title="Switch patient record view"
+                  style={{
+                    fontSize: "11px",
+                    padding: "3px 8px",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    background: "white",
+                    color: "#0f172a",
+                    height: "26px",
+                    fontWeight: 600
+                  }}
+                >
+                  <option value="All">All Patients ({appointments.length} Total Bookings)</option>
+                  {availablePatients.map((p) => (
+                    <option key={p.id} value={p.name}>
+                      {p.name} ({p.total_appointments} visits)
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
+
           <div className="table-tools" style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
             {/* Filter Tabs */}
             <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
@@ -357,17 +539,30 @@ export default function PatientPortal({
             <span>
               {searchQuery
                 ? `No bookings match "${searchQuery}". Try another keyword or clear filter.`
+                : viewScope === "patient"
+                ? `No appointments found for ${currentPatientName}. Switch to "All Clinic Bookings" or talk to our voice assistant.`
                 : "You don't have any appointments booked yet. Talk to our voice assistant to schedule."}
             </span>
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={onStartVoiceCall}
-              style={{ marginTop: "12px" }}
-            >
-              <PhoneCall size={14} />
-              <span>Book Appointment via Voice</span>
-            </button>
+            <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+              {viewScope === "patient" && (
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setViewScope("all")}
+                >
+                  <Users size={14} />
+                  <span>View All Clinic Bookings</span>
+                </button>
+              )}
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={onStartVoiceCall}
+              >
+                <PhoneCall size={14} />
+                <span>Book Appointment via Voice</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="table-scroll">
@@ -403,13 +598,32 @@ export default function PatientPortal({
                     .slice(0, 2)
                     .toUpperCase();
 
+                  const isJustBooked = latestBooking && latestBooking.reference_id === apt.reference_id;
+
                   return (
-                    <tr key={apt.id}>
+                    <tr
+                      key={apt.id}
+                      style={
+                        isJustBooked
+                          ? { background: "rgba(16, 185, 129, 0.08)", transition: "background 0.3s ease" }
+                          : undefined
+                      }
+                    >
                       {/* Ref */}
                       <td>
-                        <span className="reference">
-                          Ref: {apt.reference_id}
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <span className="reference" style={{ fontWeight: 700 }}>
+                            Ref: {apt.reference_id}
+                          </span>
+                          {isJustBooked && (
+                            <span
+                              className="badge badge-confirmed"
+                              style={{ fontSize: "9px", padding: "1px 5px", textTransform: "uppercase" }}
+                            >
+                              New
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Patient */}
@@ -417,8 +631,8 @@ export default function PatientPortal({
                         <div className="patient">
                           <span>{initials}</span>
                           <div>
-                            <strong>{apt.patient_name}</strong>
-                            <small>{apt.patient_phone || "Contact on file"}</small>
+                            <strong style={{ color: "#0f172a", fontSize: "13px" }}>{apt.patient_name}</strong>
+                            <small style={{ color: "#64748b" }}>{apt.patient_phone || "Contact on file"}</small>
                           </div>
                         </div>
                       </td>
@@ -426,22 +640,22 @@ export default function PatientPortal({
                       {/* Doctor & Specialty */}
                       <td>
                         <div>
-                          <strong style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <Stethoscope size={13} className="text-teal-600" />
+                          <strong style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px" }}>
+                            <Stethoscope size={13} className="text-teal-600 shrink-0" />
                             {apt.doctor_name || "Assigned Specialist"}
                           </strong>
-                          <small>{apt.specialty}</small>
+                          <small style={{ color: "#64748b" }}>{apt.specialty}</small>
                         </div>
                       </td>
 
                       {/* Date & Time */}
                       <td>
                         <div>
-                          <strong style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <Clock size={13} className="text-cyan-600" />
+                          <strong style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px" }}>
+                            <Clock size={13} className="text-cyan-600 shrink-0" />
                             {dateStr}
                           </strong>
-                          <small>{timeStr}</small>
+                          <small style={{ color: "#64748b" }}>{timeStr}</small>
                         </div>
                       </td>
 
@@ -467,10 +681,40 @@ export default function PatientPortal({
                               ? "badge-confirmed"
                               : apt.status === "Pending"
                               ? "badge-pending"
-                              : "badge-cancelled"
+                              : apt.status === "Cancelled"
+                              ? "badge-cancelled"
+                              : "badge-danger"
                           }`}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            fontWeight: 600,
+                            fontSize: "11px",
+                            padding: "3px 8px"
+                          }}
                         >
-                          <i></i> {apt.status}
+                          {apt.status === "Confirmed" ? (
+                            <>
+                              <CheckCircle2 size={12} style={{ color: "#10b981" }} />
+                              Confirmed
+                            </>
+                          ) : apt.status === "Pending" ? (
+                            <>
+                              <Clock size={12} style={{ color: "#f59e0b" }} />
+                              Pending
+                            </>
+                          ) : apt.status === "Cancelled" ? (
+                            <>
+                              <X size={12} style={{ color: "#64748b" }} />
+                              Cancelled
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle size={12} style={{ color: "#ef4444" }} />
+                              {apt.status || "Failed"}
+                            </>
+                          )}
                         </span>
                       </td>
 

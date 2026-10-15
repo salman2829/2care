@@ -479,10 +479,13 @@ async def sync_retell_call(
                 "id": apt.id,
                 "reference_id": apt.reference_id,
                 "patient_name": apt.patient_name,
+                "patient_phone": apt.patient_phone,
                 "doctor_name": doc_name,
                 "specialty": apt.specialty,
                 "scheduled_at": apt.scheduled_at.isoformat() if apt.scheduled_at else None,
+                "source": apt.source,
                 "status": apt.status,
+                "notes": apt.notes,
             }
 
     return {

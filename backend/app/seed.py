@@ -125,9 +125,9 @@ def seed_database(db: Session):
             "doctor_id": "doc_maya_chen",
             "specialty": "Cardiology",
             "source": "AI Voice",
-            "status": AppointmentStatus.FAILED.value,
+            "status": AppointmentStatus.CONFIRMED.value,
             "slot_index": 2,
-            "notes": "Insurance verification timeout during voice call."
+            "notes": "Cardiology consultation confirmed with Dr. Maya Chen via AI voice assistant."
         },
         {
             "id": "apt_10471",

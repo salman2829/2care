@@ -1770,11 +1770,21 @@ export default function App() {
       channel.onmessage = (event) => {
         if (event.data?.type === "CALL_COMPLETED") {
           refreshAll();
+          setTimeout(refreshAll, 1200);
+          setTimeout(refreshAll, 3000);
           const apt = event.data?.data?.appointment;
-          if (apt?.patient_name) {
-            setCurrentPatientName(apt.patient_name);
-            if (typeof window !== "undefined") {
-              localStorage.setItem("2care_current_patient", apt.patient_name);
+          if (apt) {
+            setAppointments((prev) => {
+              const exists = prev.some((a) => a.id === apt.id || a.reference_id === apt.reference_id);
+              if (exists) return prev;
+              return [apt, ...prev];
+            });
+            if (apt.patient_name) {
+              setCurrentPatientName(apt.patient_name);
+              if (typeof window !== "undefined") {
+                localStorage.setItem("2care_current_patient", apt.patient_name);
+                localStorage.setItem("2care_latest_booking", JSON.stringify(apt));
+              }
             }
           }
           if (portalMode === "admin") {
@@ -2046,16 +2056,36 @@ export default function App() {
           triggerCall={voiceCallTrigger}
           onCallCompleted={(callData) => {
             refreshAll();
+            setTimeout(refreshAll, 1200);
+            setTimeout(refreshAll, 3000);
+            setTimeout(refreshAll, 5500);
             if (callData?.appointment) {
-              if (callData.appointment.patient_name) {
-                setCurrentPatientName(callData.appointment.patient_name);
+              const apt = callData.appointment;
+              setAppointments((prev) => {
+                const exists = prev.some((a) => a.id === apt.id || a.reference_id === apt.reference_id);
+                if (exists) return prev;
+                return [apt, ...prev];
+              });
+              if (apt.patient_name) {
+                setCurrentPatientName(apt.patient_name);
                 if (typeof window !== "undefined") {
-                  localStorage.setItem("2care_current_patient", callData.appointment.patient_name);
+                  localStorage.setItem("2care_current_patient", apt.patient_name);
+                  localStorage.setItem("2care_latest_booking", JSON.stringify(apt));
                 }
               }
-              if (callData.appointment.id) {
-                setSelectedAppointmentId(callData.appointment.id);
+              if (apt.id) {
+                setSelectedAppointmentId(apt.id);
               }
+            } else {
+              appointmentService.listAppointments().then((res) => {
+                if (res.ok && res.data && res.data.length > 0) {
+                  setAppointments(res.data);
+                  const newest = res.data[0];
+                  if (newest && typeof window !== "undefined") {
+                    localStorage.setItem("2care_latest_booking", JSON.stringify(newest));
+                  }
+                }
+              });
             }
           }}
           showToast={showToast}
