@@ -32,8 +32,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Seeding error: {e}")
 
-    # Auto-sync Cloudflare tunnel and Retell Voice Agent tools if configured
-    if settings.RETELL_API_KEY and settings.RETELL_AGENT_ID:
+    # Auto-sync Cloudflare tunnel and Retell Voice Agent tools only in local dev
+    if settings.ENVIRONMENT != "production" and settings.RETELL_API_KEY and settings.RETELL_AGENT_ID:
         import threading
         from app.services.tunnel_sync import start_cloudflared_tunnel
         threading.Thread(target=start_cloudflared_tunnel, kwargs={"local_port": 8000}, daemon=True).start()
@@ -50,18 +50,21 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Middleware
-origins = settings.ALLOWED_ORIGINS
-if isinstance(origins, str):
-    origins = [origins]
-
+# CORS Middleware supporting wildcard regex with credentials for Vercel, localhost, and custom domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins if "*" not in origins else ["*"],
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Root endpoint for cloud health checks (Render, Fly, AWS, etc.)
+@app.get("/")
+@app.head("/")
+def root():
+    return {"status": "healthy", "service": "2care-operations-api", "version": "1.0.0"}
+
 
 # Mount Routers both with /api prefix and root for flexibility
 app.include_router(health.router)
