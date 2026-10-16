@@ -184,7 +184,11 @@ def sync_urls_with_retell(public_url: str) -> Dict[str, Any]:
                 "properties": {
                     "specialty": {
                         "type": "string",
-                        "description": "Medical specialty such as Cardiology, Dermatology, General Medicine, Neurology, Pediatrics"
+                        "description": "Medical specialty such as Cardiology, Dermatology, General Medicine, Neurology, Pediatrics, Orthopedics"
+                    },
+                    "call_id": {
+                        "type": "string",
+                        "description": "Active Retell call ID for server context linking"
                     }
                 }
             }
@@ -206,9 +210,10 @@ def sync_urls_with_retell(public_url: str) -> Dict[str, Any]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "doctor_id": {"type": "string", "description": "Doctor ID or name"},
+                    "doctor_id": {"type": "string", "description": "Authoritative doctor ID (e.g. doc_maya_chen)"},
                     "specialty": {"type": "string", "description": "Medical specialty"},
-                    "date": {"type": "string", "description": "Date in YYYY-MM-DD format (or 'today', 'tomorrow')"}
+                    "date": {"type": "string", "description": "Date in YYYY-MM-DD format (or 'today', 'tomorrow')"},
+                    "call_id": {"type": "string", "description": "Active Retell call ID"}
                 }
             }
         })
@@ -228,22 +233,87 @@ def sync_urls_with_retell(public_url: str) -> Dict[str, Any]:
             "parameter_type": "json",
             "parameters": {
                 "type": "object",
-                "required": ["patient_name", "patient_phone", "doctor_id", "slot_id", "patient_confirmed"],
+                "required": ["patient_name", "doctor_id", "slot_id", "patient_confirmed"],
                 "properties": {
-                    "patient_name": {"type": "string", "description": "Full patient name"},
-                    "patient_phone": {"type": "string", "description": "Patient phone number"},
-                    "doctor_id": {"type": "string", "description": "Selected doctor ID"},
-                    "slot_id": {"type": "string", "description": "Selected slot ID"},
-                    "patient_confirmed": {"type": "boolean", "description": "Must be true after patient agrees verbally"},
+                    "patient_name": {"type": "string", "description": "Full patient name. Ask caller if not known; never guess."},
+                    "patient_phone": {"type": "string", "description": "Patient callback phone number"},
+                    "doctor_id": {"type": "string", "description": "Selected doctor ID from search_doctors or check_availability"},
+                    "slot_id": {"type": "string", "description": "Selected slot ID from check_availability"},
+                    "patient_confirmed": {"type": "boolean", "description": "Must be true after patient explicitly agrees verbally to date, time, doctor, and patient name"},
+                    "call_id": {"type": "string", "description": "Active Retell call ID for idempotency and state tracking"},
                     "notes": {"type": "string", "description": "Reason for visit or clinical notes"}
                 }
             }
         })
 
-    # 5. Send PATCH update to Retell LLM
+    if "get_appointment" not in found_tool_names:
+        updated_tools.append({
+            "type": "custom",
+            "name": "get_appointment",
+            "url": tool_endpoint_map["get_appointment"],
+            "method": "POST",
+            "description": "Retrieve authoritative booking details by reference ID.",
+            "speak_during_execution": True,
+            "speak_after_execution": True,
+            "execution_message_type": "prompt",
+            "execution_message_description": "Looking up your appointment record...",
+            "timeout_ms": 12000,
+            "parameter_type": "json",
+            "parameters": {
+                "type": "object",
+                "required": ["reference_id"],
+                "properties": {
+                    "reference_id": {"type": "string", "description": "Booking reference code (e.g. 2C-10482)"},
+                    "call_id": {"type": "string", "description": "Active Retell call ID"}
+                }
+            }
+        })
+
+    # 5. Send PATCH update to Retell LLM with tools and tightened prompt
+    tightened_prompt = (
+        "You are the autonomous clinical appointment scheduling assistant for {{clinic_name}} "
+        "(default: '2care Clinical Command Center').\n\n"
+        "## DYNAMIC VARIABLES\n"
+        "You have access to the following dynamic variables passed at call start:\n"
+        "- {{patient_name}}: Full name of the patient. If this is empty, 'Valued Patient', or unknown, "
+        "you MUST ask the caller for their full legal name before booking. NEVER GUESS OR INVENT A NAME.\n"
+        "- {{patient_id}}: Patient medical record identifier if known.\n"
+        "- {{patient_phone}}: Verified callback phone number. If missing, ask the caller for their telephone number.\n"
+        "- {{selected_doctor_id}}: Pre-selected doctor ID (e.g. doc_maya_chen) if the user initiated the call from a specific doctor in the portal.\n"
+        "- {{selected_doctor_name}}: Pre-selected doctor name.\n"
+        "- {{selected_slot_id}}: Pre-selected appointment slot ID if initiated from a specific calendar slot.\n"
+        "- {{selected_date}}: Pre-selected date.\n"
+        "- {{clinic_name}}: The official facility name ('2care Clinical Command Center').\n\n"
+        "## WORKFLOW RULES\n"
+        "1. Clarify Needs & Identify Provider:\n"
+        "   - If {{selected_doctor_name}} is provided, greet the patient and acknowledge their preferred provider.\n"
+        "   - Otherwise, ask the caller what specialty or symptoms they need help with (Cardiology, Dermatology, General Medicine, Neurology, Pediatrics, Orthopedics).\n"
+        "   - Use search_doctors to find active providers. Always use the canonical doctor_id returned by the tool.\n\n"
+        "2. Verify Authoritative Availability:\n"
+        "   - Use check_availability with doctor_id to retrieve open slots.\n"
+        "   - Offer the patient 2-3 specific openings with date and time.\n"
+        "   - NEVER invent or promise a time slot that was not returned by check_availability.\n\n"
+        "3. Explicit Verbal Confirmation (MANDATORY):\n"
+        "   - Before invoking book_appointment, you MUST verbally read back:\n"
+        "     a) Doctor's full name and specialty\n"
+        "     b) Exact appointment date and time\n"
+        "     c) Patient's full name\n"
+        "   - Ask clearly: 'Would you like me to go ahead and book this appointment for you?'\n"
+        "   - Set patient_confirmed: true ONLY after the patient answers with clear verbal confirmation (e.g. 'Yes', 'Please do', 'That works').\n"
+        "   - If the patient has not confirmed, do NOT book.\n\n"
+        "4. Handling Missing Variables & Errors:\n"
+        "   - If any required identifier is missing, ASK the caller. Never fabricate information.\n"
+        "   - If book_appointment returns status 'Conflict', inform the caller calmly that the slot was just claimed and immediately offer the alternative slots returned.\n"
+        "   - If book_appointment returns status 'MissingIdentifier', ask the caller for the missing detail.\n\n"
+        "5. Closing & Reference Code:\n"
+        "   - Announce the booking reference code (e.g. 2C-XXXXX) ONLY after book_appointment returns status 'Confirmed'.\n"
+        "   - Thank the patient warmly for choosing {{clinic_name}}."
+    )
+
     try:
         patch_payload = {
-            "general_tools": updated_tools
+            "general_tools": updated_tools,
+            "general_prompt": tightened_prompt
         }
         patch_req = urllib.request.Request(
             f"https://api.retellai.com/update-retell-llm/{llm_id}",
@@ -253,7 +323,7 @@ def sync_urls_with_retell(public_url: str) -> Dict[str, Any]:
         )
         with urllib.request.urlopen(patch_req, timeout=12) as resp:
             updated_llm_res = json.loads(resp.read().decode("utf-8"))
-            logger.info(f"Retell LLM {llm_id} tools successfully synced to {clean_url}")
+            logger.info(f"Retell LLM {llm_id} tools & prompt successfully synced to {clean_url}")
     except Exception as e:
         logger.error(f"Failed to update Retell LLM tools: {e}")
         return {"success": False, "error": f"Failed to update Retell LLM tools: {e}"}

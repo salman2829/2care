@@ -75,7 +75,11 @@ export default function RetellAgentConfigModal({ isOpen, onClose }: RetellAgentC
         properties: {
           specialty: {
             type: "string",
-            description: "Medical specialty (Cardiology, Dermatology, General Medicine, Neurology, Pediatrics)",
+            description: "Medical specialty (Cardiology, Dermatology, General Medicine, Neurology, Pediatrics, Orthopedics)",
+          },
+          call_id: {
+            type: "string",
+            description: "Active Retell call ID for server context linking",
           },
         },
       },
@@ -87,25 +91,27 @@ export default function RetellAgentConfigModal({ isOpen, onClose }: RetellAgentC
       parameters: {
         type: "object",
         properties: {
-          doctor_id: { type: "string", description: "Doctor ID or name" },
+          doctor_id: { type: "string", description: "Authoritative doctor ID (e.g. doc_maya_chen)" },
           specialty: { type: "string", description: "Medical specialty" },
           date: { type: "string", description: "Date in YYYY-MM-DD format (or 'today', 'tomorrow')" },
+          call_id: { type: "string", description: "Active Retell call ID" },
         },
       },
     },
     {
       name: "book_appointment",
       endpoint: `${domain}/api/retell/tools/book-appointment`,
-      description: "Atomically book appointment slot. Enforces explicit patient confirmation.",
+      description: "Atomically book appointment slot. Enforces explicit patient confirmation and idempotent replay.",
       parameters: {
         type: "object",
-        required: ["patient_name", "patient_phone", "doctor_id", "slot_id", "patient_confirmed"],
+        required: ["patient_name", "doctor_id", "slot_id", "patient_confirmed"],
         properties: {
-          patient_name: { type: "string", description: "Full patient name" },
-          patient_phone: { type: "string", description: "Patient telephone number" },
+          patient_name: { type: "string", description: "Full patient name. Ask caller if not known; never guess." },
+          patient_phone: { type: "string", description: "Patient contact telephone number" },
           doctor_id: { type: "string", description: "Selected doctor ID" },
-          slot_id: { type: "string", description: "Selected slot ID" },
-          patient_confirmed: { type: "boolean", description: "Explicit verbal confirmation from patient" },
+          slot_id: { type: "string", description: "Selected slot ID from check_availability" },
+          patient_confirmed: { type: "boolean", description: "Must be true after patient explicitly confirms verbally" },
+          call_id: { type: "string", description: "Active Retell call ID for idempotency and server state" },
           notes: { type: "string", description: "Reason for visit or clinical notes" },
         },
       },
@@ -119,10 +125,53 @@ export default function RetellAgentConfigModal({ isOpen, onClose }: RetellAgentC
         required: ["reference_id"],
         properties: {
           reference_id: { type: "string", description: "Booking reference (e.g. 2C-10482)" },
+          call_id: { type: "string", description: "Active Retell call ID" },
         },
       },
     },
   ];
+
+  const tightenedPrompt = `You are the autonomous clinical appointment scheduling assistant for {{clinic_name}} (default: "2care Clinical Command Center").
+
+## DYNAMIC VARIABLES
+You have access to the following dynamic variables passed at call start:
+- {{patient_name}}: Full name of the patient. If this is empty, "Valued Patient", or unknown, you MUST ask the caller for their full legal name before booking. NEVER GUESS OR INVENT A NAME.
+- {{patient_id}}: Patient medical record identifier if known.
+- {{patient_phone}}: Verified callback phone number. If missing, ask the caller for their telephone number.
+- {{selected_doctor_id}}: Pre-selected doctor ID (e.g. doc_maya_chen) if the user initiated the call from a specific doctor in the portal.
+- {{selected_doctor_name}}: Pre-selected doctor name.
+- {{selected_slot_id}}: Pre-selected appointment slot ID if initiated from a specific calendar slot.
+- {{selected_date}}: Pre-selected date.
+- {{clinic_name}}: The official facility name ("2care Clinical Command Center").
+
+## WORKFLOW RULES
+1. Clarify Needs & Identify Provider:
+   - If {{selected_doctor_name}} is provided, greet the patient and acknowledge their preferred provider.
+   - Otherwise, ask the caller what specialty or symptoms they need help with (Cardiology, Dermatology, General Medicine, Neurology, Pediatrics, Orthopedics).
+   - Use search_doctors to find active providers. Always use the canonical doctor_id returned by the tool.
+
+2. Verify Authoritative Availability:
+   - Use check_availability with doctor_id to retrieve open slots.
+   - Offer the patient 2-3 specific openings with date and time.
+   - NEVER invent or promise a time slot that was not returned by check_availability.
+
+3. Explicit Verbal Confirmation (MANDATORY):
+   - Before invoking book_appointment, you MUST verbally read back:
+     a) Doctor's full name and specialty
+     b) Exact appointment date and time
+     c) Patient's full name
+   - Ask clearly: "Would you like me to go ahead and book this appointment for you?"
+   - Set patient_confirmed: true ONLY after the patient answers with clear verbal confirmation (e.g. "Yes", "Please do", "That works").
+   - If the patient has not confirmed, do NOT book.
+
+4. Handling Missing Variables & Errors:
+   - If any required identifier is missing, ASK the caller. Never fabricate information.
+   - If book_appointment returns status "Conflict", inform the caller calmly that the slot was just claimed and immediately offer the alternative slots returned.
+   - If book_appointment returns status "MissingIdentifier", ask the caller for the missing detail.
+
+5. Closing & Reference Code:
+   - Announce the booking reference code (e.g. 2C-XXXXX) ONLY after book_appointment returns status "Confirmed".
+   - Thank the patient warmly for choosing {{clinic_name}}.`;
 
   return (
     <AnimatePresence>
@@ -269,6 +318,50 @@ export default function RetellAgentConfigModal({ isOpen, onClose }: RetellAgentC
                   </pre>
                 </div>
               ))}
+            </div>
+
+            <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <div>
+                  <strong style={{ color: "#0f172a", fontSize: 12 }}>Tightened Retell System Prompt</strong>
+                  <span style={{ fontSize: 9, color: "#64748b", marginLeft: 8 }}>Enforces Dynamic Variables & Verbal Confirmation</span>
+                </div>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  style={{ minHeight: 24, padding: "0 8px", fontSize: 9 }}
+                  onClick={() => copyToClipboard(tightenedPrompt, "system_prompt")}
+                >
+                  {copiedKey === "system_prompt" ? (
+                    <>
+                      <Check size={11} /> Copied Prompt
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={11} /> Copy Prompt
+                    </>
+                  )}
+                </button>
+              </div>
+              <p style={{ margin: "0 0 6px", fontSize: 10, color: "#475569" }}>
+                Paste into your Retell Agent's <strong>General Prompt</strong> to instruct the LLM on available dynamic variables, strict verbal confirmation, and error recovery.
+              </p>
+              <pre
+                style={{
+                  background: "#0b1320",
+                  color: "#94a3b8",
+                  padding: 8,
+                  borderRadius: 6,
+                  fontSize: 9,
+                  maxHeight: 140,
+                  overflowY: "auto",
+                  fontFamily: "ui-monospace, monospace",
+                  margin: 0,
+                  whiteSpace: "pre-wrap"
+                }}
+              >
+                {tightenedPrompt}
+              </pre>
             </div>
 
             <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "#f8fafc", border: "1px solid #e2e8f0" }}>

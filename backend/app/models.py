@@ -104,10 +104,33 @@ class CallLog(Base):
     status = Column(String(32), nullable=False, default="completed", index=True)
     transcript = Column(Text, nullable=True)
     tool_calls_log = Column(Text, nullable=True)  # JSON formatted execution records
+    dynamic_variables = Column(Text, nullable=True)  # JSON formatted initial dynamic vars
+    context_audit = Column(Text, nullable=True)  # JSON formatted context audit trail
     appointment_id = Column(String(64), ForeignKey("appointments.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, index=True)
 
     appointment = relationship("Appointment", back_populates="call_logs")
+
+
+class CallState(Base):
+    __tablename__ = "call_states"
+
+    id = Column(String(64), primary_key=True, default=generate_uuid)
+    call_id = Column(String(64), unique=True, nullable=False, index=True)
+    patient_name = Column(String(120), nullable=True)
+    patient_id = Column(String(64), nullable=True)
+    patient_phone = Column(String(32), nullable=True)
+    chosen_doctor_id = Column(String(64), nullable=True)
+    chosen_doctor_name = Column(String(120), nullable=True)
+    chosen_specialty = Column(String(100), nullable=True)
+    chosen_slot_id = Column(String(64), nullable=True)
+    chosen_slot_time = Column(DateTime(timezone=True), nullable=True)
+    booking_status = Column(String(32), nullable=False, default="inquiry")  # inquiry, slot_offered, pending_confirmation, booked, conflict, cancelled
+    booking_reference_id = Column(String(32), nullable=True)
+    dynamic_variables = Column(Text, nullable=True)  # JSON string
+    context_history = Column(Text, nullable=True)  # JSON string of event transitions
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
 
 class EvaluationRun(Base):

@@ -10,6 +10,8 @@ export interface CallLogItem {
   status: string;
   transcript?: string | null;
   tool_calls_log?: string | null;
+  dynamic_variables?: string | null;
+  context_audit?: string | null;
   appointment_id?: string | null;
   created_at: string;
 }
@@ -85,8 +87,12 @@ export const retellService = {
     return apiClient.post<any>("/retell/tools/get-appointment", { reference_id });
   },
 
-  async createWebCall(): Promise<ApiResponse<{ call_id: string; access_token: string }>> {
-    return apiClient.post<{ call_id: string; access_token: string }>("/retell/create-web-call");
+  async createWebCall(context?: CreateWebCallContext): Promise<ApiResponse<{ call_id: string; access_token: string; dynamic_variables?: any }>> {
+    return apiClient.post<{ call_id: string; access_token: string; dynamic_variables?: any }>("/retell/create-web-call", context || {});
+  },
+
+  async getCallAudit(call_id: string): Promise<ApiResponse<any>> {
+    return apiClient.get<any>(`/retell/calls/${call_id}/audit`);
   },
 
   async syncCall(params: {
@@ -110,6 +116,17 @@ export const retellService = {
     return apiClient.post<TunnelStatusResponse>("/retell/tunnel/sync", { public_url });
   },
 };
+
+export interface CreateWebCallContext {
+  patient_name?: string;
+  patient_id?: string;
+  patient_phone?: string;
+  selected_doctor_id?: string;
+  selected_doctor_name?: string;
+  selected_slot_id?: string;
+  selected_date?: string;
+  clinic_name?: string;
+}
 
 export interface TunnelStatusResponse {
   is_running: boolean;

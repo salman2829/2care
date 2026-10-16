@@ -2054,6 +2054,12 @@ export default function App() {
           isOpenControlled={voiceWidgetOpen}
           onOpenChange={setVoiceWidgetOpen}
           triggerCall={voiceCallTrigger}
+          initialContext={{
+            patient_name: currentPatientName && currentPatientName.toLowerCase() !== "all" ? currentPatientName : undefined,
+            patient_phone: patients.find(p => p.name.toLowerCase() === (currentPatientName || "").toLowerCase())?.phone,
+            patient_id: patients.find(p => p.name.toLowerCase() === (currentPatientName || "").toLowerCase())?.id,
+            clinic_name: "2care Clinical Command Center"
+          }}
           onCallCompleted={(callData) => {
             refreshAll();
             setTimeout(refreshAll, 1200);
@@ -2330,6 +2336,13 @@ export default function App() {
         isOpenControlled={voiceWidgetOpen}
         onOpenChange={setVoiceWidgetOpen}
         triggerCall={voiceCallTrigger}
+        initialContext={{
+          patient_name: currentPatientName && currentPatientName.toLowerCase() !== "all" ? currentPatientName : undefined,
+          patient_phone: patients.find(p => p.name.toLowerCase() === (currentPatientName || "").toLowerCase())?.phone,
+          patient_id: patients.find(p => p.name.toLowerCase() === (currentPatientName || "").toLowerCase())?.id,
+          selected_doctor_id: availabilityDoctorFilter || undefined,
+          clinic_name: "2care Clinical Command Center"
+        }}
         onCallCompleted={(callData) => {
           refreshAll();
           if (callData?.appointment) {

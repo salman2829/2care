@@ -112,11 +112,25 @@ class HealthResponse(BaseModel):
 
 
 # ==========================================
+# ==========================================
 # Retell AI Custom Function Schemas
 # ==========================================
 
+class CreateWebCallRequest(BaseModel):
+    patient_name: Optional[str] = Field(None, description="Patient full name if authenticated/selected")
+    patient_id: Optional[str] = Field(None, description="Patient medical record ID")
+    patient_phone: Optional[str] = Field(None, description="Patient verified telephone number")
+    selected_doctor_id: Optional[str] = Field(None, description="Pre-selected doctor ID from UI")
+    selected_doctor_name: Optional[str] = Field(None, description="Pre-selected doctor name")
+    selected_slot_id: Optional[str] = Field(None, description="Pre-selected slot ID")
+    selected_date: Optional[str] = Field(None, description="Pre-selected appointment date (YYYY-MM-DD)")
+    clinic_name: Optional[str] = Field("2care Clinical Command Center", description="Clinic or facility name")
+    model_config = ConfigDict(extra="ignore")
+
+
 class SearchDoctorsInput(BaseModel):
     specialty: Optional[str] = Field(None, description="Medical specialty such as Cardiology, Dermatology, General Medicine, Neurology")
+    call_id: Optional[str] = Field(None, description="Active Retell call ID for conversation context linking")
     model_config = ConfigDict(extra="ignore")
 
 
@@ -135,9 +149,10 @@ class SearchDoctorsOutput(BaseModel):
 
 
 class CheckAvailabilityInput(BaseModel):
-    doctor_id: Optional[str] = Field(None, description="Doctor ID if known")
+    doctor_id: Optional[str] = Field(None, description="Authoritative Doctor ID (e.g. doc_maya_chen). Required if querying a specific doctor.")
     specialty: Optional[str] = Field(None, description="Medical specialty to search available slots for")
     date: Optional[str] = Field(None, description="Date in YYYY-MM-DD format (optional, defaults to upcoming slots)")
+    call_id: Optional[str] = Field(None, description="Active Retell call ID for server state association")
     model_config = ConfigDict(extra="ignore")
 
 
@@ -158,12 +173,13 @@ class CheckAvailabilityOutput(BaseModel):
 
 
 class BookAppointmentVoiceInput(BaseModel):
-    patient_name: str = Field(..., min_length=2, max_length=120, description="Full patient name")
-    patient_phone: str = Field(..., min_length=7, max_length=25, description="Patient contact telephone number")
-    doctor_id: str = Field(..., min_length=1, description="Selected doctor ID")
-    slot_id: str = Field(..., min_length=1, description="Selected slot ID")
+    patient_name: Optional[str] = Field(None, max_length=120, description="Full patient name")
+    patient_phone: Optional[str] = Field(None, max_length=25, description="Patient contact telephone number")
+    doctor_id: Optional[str] = Field(None, description="Authoritative doctor ID (e.g. doc_maya_chen)")
+    slot_id: Optional[str] = Field(None, description="Authoritative slot ID selected from check_availability")
     specialty: Optional[str] = Field(None, description="Medical specialty")
-    patient_confirmed: bool = Field(True, description="Requires explicit patient confirmation before booking")
+    patient_confirmed: bool = Field(True, description="Requires explicit verbal patient confirmation before booking")
+    call_id: Optional[str] = Field(None, description="Active Retell call ID for conversation state and idempotency tracking")
     notes: Optional[str] = Field(None, max_length=500, description="Reason for visit or clinical notes")
     model_config = ConfigDict(extra="ignore")
 
@@ -176,12 +192,14 @@ class BookAppointmentVoiceOutput(BaseModel):
     specialty: str
     appointment_time: str
     status: str
+    error_code: Optional[str] = None
     spoken_summary: str
     message: str
 
 
 class GetAppointmentVoiceInput(BaseModel):
     reference_id: str = Field(..., min_length=3, description="Appointment reference ID (e.g. 2C-10482)")
+    call_id: Optional[str] = Field(None, description="Active Retell call ID")
     model_config = ConfigDict(extra="ignore")
 
 
@@ -206,8 +224,28 @@ class CallLogResponse(BaseModel):
     status: str
     transcript: Optional[str] = None
     tool_calls_log: Optional[str] = None
+    dynamic_variables: Optional[str] = None
+    context_audit: Optional[str] = None
     appointment_id: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CallContextAuditResponse(BaseModel):
+    call_id: str
+    patient_name: Optional[str] = None
+    patient_id: Optional[str] = None
+    chosen_doctor_id: Optional[str] = None
+    chosen_doctor_name: Optional[str] = None
+    chosen_specialty: Optional[str] = None
+    chosen_slot_id: Optional[str] = None
+    booking_status: str
+    booking_reference_id: Optional[str] = None
+    dynamic_variables: Optional[dict] = None
+    history: List[dict] = []
+    tool_calls: List[dict] = []
+    transcript: Optional[str] = None
+    context_health: str  # "healthy" | "recovered" | "degraded"
+    audit_notes: List[str] = []
 

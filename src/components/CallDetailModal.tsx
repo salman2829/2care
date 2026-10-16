@@ -22,6 +22,32 @@ export default function CallDetailModal({ call, onClose }: CallDetailModalProps)
     }
   }
 
+  let dynamicVars: Record<string, any> | null = null;
+  if (call.dynamic_variables) {
+    try {
+      dynamicVars = typeof call.dynamic_variables === "string"
+        ? JSON.parse(call.dynamic_variables)
+        : call.dynamic_variables;
+    } catch (e) {}
+  }
+
+  const [auditData, setAuditData] = React.useState<any>(null);
+  const [loadingAudit, setLoadingAudit] = React.useState(false);
+
+  React.useEffect(() => {
+    if (call?.call_id) {
+      setLoadingAudit(true);
+      retellService.getCallAudit(call.call_id)
+        .then((res) => {
+          if (res.ok && res.data) {
+            setAuditData(res.data);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoadingAudit(false));
+    }
+  }, [call?.call_id]);
+
   const dt = new Date(call.created_at);
   const timeStr = dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   const dateStr = dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -37,7 +63,7 @@ export default function CallDetailModal({ call, onClose }: CallDetailModalProps)
       >
         <motion.div
           className="modal-box"
-          style={{ maxWidth: 620 }}
+          style={{ maxWidth: 660 }}
           initial={{ scale: 0.95, opacity: 0, y: 15 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.95, opacity: 0, y: 15 }}
@@ -45,7 +71,7 @@ export default function CallDetailModal({ call, onClose }: CallDetailModalProps)
         >
           <div className="modal-head">
             <div>
-              <span className="eyebrow">RETELL VOICE TELEMETRY</span>
+              <span className="eyebrow">RETELL VOICE TELEMETRY & CONTEXT AUDIT</span>
               <h2>Call #{call.call_id}</h2>
             </div>
             <button type="button" className="button button-ghost" onClick={onClose}>
@@ -85,6 +111,82 @@ export default function CallDetailModal({ call, onClose }: CallDetailModalProps)
                 </span>
               </div>
             </div>
+
+            {/* Dynamic Variables Passed at Call Start */}
+            {dynamicVars && Object.keys(dynamicVars).length > 0 && (
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 10,
+                  background: "#f0fdf4",
+                  border: "1px solid #bbf7d0",
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <strong style={{ color: "#166534", fontSize: 11, display: "flex", alignItems: "center", gap: 6 }}>
+                    <ShieldCheck size={14} className="text-emerald-600" />
+                    Dynamic Variables Sent at Call Start (Explicit Context)
+                  </strong>
+                  <span style={{ fontSize: 9, background: "#dcfce7", color: "#15803d", padding: "2px 6px", borderRadius: 4, fontWeight: 600 }}>
+                    Retell LLM Injected
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {Object.entries(dynamicVars).map(([k, v]) => (
+                    <span
+                      key={k}
+                      style={{
+                        background: "white",
+                        border: "1px solid #dcfce7",
+                        padding: "3px 8px",
+                        borderRadius: 6,
+                        fontSize: 10,
+                        color: "#1e293b",
+                      }}
+                    >
+                      <strong style={{ color: "#0284c7" }}>{k}:</strong> {String(v) || "<empty>"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Context Health & Audit Summary */}
+            {auditData && (
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 10,
+                  background: auditData.context_health === "healthy" ? "#f8fafc" : "#fffbeb",
+                  border: auditData.context_health === "healthy" ? "1px solid #e2e8f0" : "1px solid #fde68a",
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <strong style={{ color: "#334155", fontSize: 11 }}>Server Conversation State Audit</strong>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      fontWeight: 600,
+                      background: auditData.context_health === "healthy" ? "#ecfdf5" : "#fef3c7",
+                      color: auditData.context_health === "healthy" ? "#047857" : "#b45309",
+                    }}
+                  >
+                    State Status: {auditData.booking_status} ({auditData.context_health})
+                  </span>
+                </div>
+                {auditData.audit_notes && auditData.audit_notes.length > 0 && (
+                  <ul style={{ margin: "4px 0 0 16px", padding: 0, fontSize: 10, color: "#475569" }}>
+                    {auditData.audit_notes.map((note: string, nIdx: number) => (
+                      <li key={nIdx}>{note}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
 
             {/* Linked Appointment */}
             {call.appointment_id && (

@@ -11,6 +11,15 @@ interface VoiceCallWidgetProps {
   showToast?: (title: string, message: string) => void;
   onNavigateToAppointments?: () => void;
   onNavigateToCalls?: () => void;
+  initialContext?: {
+    patient_name?: string;
+    patient_id?: string;
+    patient_phone?: string;
+    selected_doctor_id?: string;
+    selected_doctor_name?: string;
+    selected_slot_id?: string;
+    selected_date?: string;
+  };
 }
 
 export default function VoiceCallWidget({
@@ -20,7 +29,8 @@ export default function VoiceCallWidget({
   onCallCompleted,
   showToast,
   onNavigateToAppointments,
-  onNavigateToCalls
+  onNavigateToCalls,
+  initialContext
 }: VoiceCallWidgetProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = isOpenControlled !== undefined ? isOpenControlled : internalOpen;
@@ -212,7 +222,17 @@ export default function VoiceCallWidget({
     setCallState("requesting_mic");
 
     // Parallelize token fetching with user media request for instantaneous connection
-    const tokenPromise = retellService.createWebCall();
+    const knownPatientName = initialContext?.patient_name || (typeof window !== "undefined" ? localStorage.getItem("2care_current_patient") || undefined : undefined);
+    const tokenPromise = retellService.createWebCall({
+      patient_name: knownPatientName,
+      patient_id: initialContext?.patient_id,
+      patient_phone: initialContext?.patient_phone,
+      selected_doctor_id: initialContext?.selected_doctor_id,
+      selected_doctor_name: initialContext?.selected_doctor_name,
+      selected_slot_id: initialContext?.selected_slot_id,
+      selected_date: initialContext?.selected_date,
+      clinic_name: "2care Clinical Command Center"
+    });
 
     let micStream: MediaStream | null = null;
     try {

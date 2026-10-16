@@ -10,13 +10,13 @@ from sqlalchemy import select, func
 
 from app.database import get_db
 from app.config import settings
-from app.models import Appointment, CallLog, utc_now
+from app.models import Appointment, CallLog, CallState, Doctor, utc_now
 from app.schemas import (
     SearchDoctorsInput, SearchDoctorsOutput,
     CheckAvailabilityInput, CheckAvailabilityOutput,
     BookAppointmentVoiceInput, BookAppointmentVoiceOutput,
     GetAppointmentVoiceInput, GetAppointmentVoiceOutput,
-    CallLogResponse
+    CallLogResponse, CreateWebCallRequest, CallContextAuditResponse
 )
 from app.services.retell_tools import (
     search_doctors_service,
@@ -24,7 +24,10 @@ from app.services.retell_tools import (
     book_appointment_voice_service,
     get_appointment_voice_service,
     record_call_log,
-    mask_phone_number
+    mask_phone_number,
+    get_or_create_call_state,
+    update_call_state,
+    audit_call_context
 )
 
 logger = logging.getLogger("2care-retell-router")
@@ -60,8 +63,28 @@ def verify_retell_auth(
 
 
 # ==========================================
-# Retell AI Custom Functions
+# Retell AI Custom Functions with Context Linking
 # ==========================================
+
+def extract_call_id(body: dict, request: Request) -> Optional[str]:
+    """Extract call_id from tool invocation args, Retell call wrapper, or custom headers."""
+    # 1. From args
+    args = body.get("args", {})
+    if isinstance(args, dict) and args.get("call_id"):
+        return args["call_id"]
+    # 2. From Retell call context wrapper
+    call_obj = body.get("call", {})
+    if isinstance(call_obj, dict) and call_obj.get("call_id"):
+        return call_obj["call_id"]
+    # 3. Direct body key
+    if body.get("call_id"):
+        return body["call_id"]
+    # 4. Request header
+    hdr = request.headers.get("x-retell-call-id")
+    if hdr:
+        return hdr
+    return None
+
 
 @router.post("/tools/search-doctors", response_model=SearchDoctorsOutput)
 async def retell_search_doctors(
@@ -71,11 +94,14 @@ async def retell_search_doctors(
 ):
     """
     Retell custom function tool: Find active doctors by medical specialty.
+    Maintains server-side conversation state keyed by call_id.
     """
     body = await request.json()
     args = body.get("args", body)
+    call_id = extract_call_id(body, request)
     input_data = SearchDoctorsInput(**args)
-    return search_doctors_service(specialty=input_data.specialty, db=db)
+    resolved_call_id = input_data.call_id or call_id
+    return search_doctors_service(specialty=input_data.specialty, db=db, call_id=resolved_call_id)
 
 
 @router.post("/tools/check-availability", response_model=CheckAvailabilityOutput)
@@ -86,15 +112,19 @@ async def retell_check_availability(
 ):
     """
     Retell custom function tool: Retrieve real slots for doctor or specialty and date.
+    Recovers doctor or specialty from server state if not explicitly passed by LLM.
     """
     body = await request.json()
     args = body.get("args", body)
+    call_id = extract_call_id(body, request)
     input_data = CheckAvailabilityInput(**args)
+    resolved_call_id = input_data.call_id or call_id
     return check_availability_service(
         doctor_id=input_data.doctor_id,
         specialty=input_data.specialty,
         date_str=input_data.date,
-        db=db
+        db=db,
+        call_id=resolved_call_id
     )
 
 
@@ -106,11 +136,15 @@ async def retell_book_appointment(
 ):
     """
     Retell custom function tool: Book selected slot using transactional booking service.
-    Enforces explicit patient confirmation and handles concurrency conflicts gracefully.
+    Enforces required identifiers, recovers server state, verifies explicit confirmation,
+    and guarantees idempotent repeat execution.
     """
     body = await request.json()
     args = body.get("args", body)
+    call_id = extract_call_id(body, request)
     input_data = BookAppointmentVoiceInput(**args)
+    if not input_data.call_id and call_id:
+        input_data.call_id = call_id
     return book_appointment_voice_service(data=input_data, db=db)
 
 
@@ -125,8 +159,10 @@ async def retell_get_appointment(
     """
     body = await request.json()
     args = body.get("args", body)
+    call_id = extract_call_id(body, request)
     input_data = GetAppointmentVoiceInput(**args)
-    return get_appointment_voice_service(reference_id=input_data.reference_id, db=db)
+    resolved_call_id = input_data.call_id or call_id
+    return get_appointment_voice_service(reference_id=input_data.reference_id, db=db, call_id=resolved_call_id)
 
 
 # ==========================================
@@ -170,11 +206,42 @@ async def retell_webhook(
     transcript = call_data.get("transcript") or call_data.get("call_analysis", {}).get("call_summary")
     tool_calls = call_data.get("tool_calls") or []
 
+    # Dynamic variables from Retell call object
+    dynamic_vars = call_data.get("retell_llm_dynamic_variables") or {}
+    dyn_json = json.dumps(dynamic_vars) if dynamic_vars else None
+
+    # Handle call_started: initialize conversation state immediately
+    if event == "call_started":
+        get_or_create_call_state(call_id=call_id, db=db, initial_vars=dynamic_vars)
+        record_call_log(
+            call_id=call_id,
+            caller_phone=caller_phone,
+            agent_id=agent_id,
+            direction=direction,
+            duration_seconds=0,
+            status="in_progress",
+            transcript=transcript or "Call started.",
+            tool_calls=tool_calls,
+            appointment_id=None,
+            db=db,
+            dynamic_variables=dyn_json
+        )
+        logger.info(f"Retell call_started registered for call_id={call_id}")
+        return {
+            "status": "ok",
+            "call_id": call_id,
+            "event": event,
+            "dynamic_variables": dynamic_vars
+        }
+
     # Check if an appointment reference was generated in transcript or analysis
     appointment_id = None
     custom_data = call_data.get("call_analysis", {}).get("custom_analysis_data", {})
     if "reference_id" in custom_data:
-        appointment_id = custom_data["reference_id"]
+        ref_id = custom_data["reference_id"]
+        apt = db.execute(select(Appointment).where(Appointment.reference_id == ref_id)).scalar_one_or_none()
+        if apt:
+            appointment_id = apt.id
 
     log = record_call_log(
         call_id=call_id,
@@ -186,7 +253,8 @@ async def retell_webhook(
         transcript=transcript,
         tool_calls=tool_calls,
         appointment_id=appointment_id,
-        db=db
+        db=db,
+        dynamic_variables=dyn_json
     )
 
     logger.info(f"Retell call event '{event}' processed for call {call_id}")
@@ -198,6 +266,12 @@ def list_call_logs(db: Session = Depends(get_db)):
     """Retrieve operational voice call logs with masked numbers and tool execution telemetry."""
     stmt = select(CallLog).order_by(CallLog.created_at.desc()).limit(50)
     return db.execute(stmt).scalars().all()
+
+
+@router.get("/calls/{call_id}/audit", response_model=CallContextAuditResponse)
+def get_call_context_audit(call_id: str, db: Session = Depends(get_db)):
+    """Forensic diagnostic audit of context delivery, state evolution, and tool executions for a call."""
+    return audit_call_context(call_id, db)
 
 
 @router.post("/simulate-call", response_model=CallLogResponse)
@@ -216,21 +290,30 @@ def simulate_voice_agent_call(
     call_id = f"CA-{int(utc_now().timestamp()) % 10000:04d}"
     tools_executed = []
 
+    # Initialize server state with dynamic variables
+    initial_vars = {
+        "customer_name": "Alexandria Hayes",
+        "patient_name": "Alexandria Hayes",
+        "patient_phone": "+1-555-019-8822",
+        "clinic_name": "2care Clinical Command Center"
+    }
+    get_or_create_call_state(call_id=call_id, db=db, initial_vars=initial_vars)
+
     if scenario == "booking_success":
         # 1. search doctors
-        docs_res = search_doctors_service(specialty="Cardiology", db=db)
+        docs_res = search_doctors_service(specialty="Cardiology", db=db, call_id=call_id)
         tools_executed.append({
             "tool": "search_doctors",
-            "args": {"specialty": "Cardiology"},
+            "args": {"specialty": "Cardiology", "call_id": call_id},
             "result": docs_res.message
         })
         doc_id = docs_res.doctors[0].id if docs_res.doctors else "doc_maya_chen"
 
         # 2. check availability
-        avail_res = check_availability_service(doctor_id=doc_id, specialty=None, date_str=None, db=db)
+        avail_res = check_availability_service(doctor_id=doc_id, specialty=None, date_str=None, db=db, call_id=call_id)
         tools_executed.append({
             "tool": "check_availability",
-            "args": {"doctor_id": doc_id},
+            "args": {"doctor_id": doc_id, "call_id": call_id},
             "result": f"found {len(avail_res.slots)} slots"
         })
         slot_id = avail_res.slots[0].slot_id if avail_res.slots else "slot_1"
@@ -244,13 +327,14 @@ def simulate_voice_agent_call(
                 slot_id=slot_id,
                 specialty="Cardiology",
                 patient_confirmed=True,
+                call_id=call_id,
                 notes="Autonomous voice booking test."
             ),
             db=db
         )
         tools_executed.append({
             "tool": "book_appointment",
-            "args": {"patient_name": "Alexandria Hayes", "doctor_id": doc_id, "slot_id": slot_id},
+            "args": {"patient_name": "Alexandria Hayes", "doctor_id": doc_id, "slot_id": slot_id, "call_id": call_id},
             "result": book_res.message,
             "reference_id": book_res.reference_id
         })
@@ -273,10 +357,10 @@ def simulate_voice_agent_call(
 
     else:
         # Inquiry only
-        docs_res = search_doctors_service(specialty="Dermatology", db=db)
+        docs_res = search_doctors_service(specialty="Dermatology", db=db, call_id=call_id)
         tools_executed.append({
             "tool": "search_doctors",
-            "args": {"specialty": "Dermatology"},
+            "args": {"specialty": "Dermatology", "call_id": call_id},
             "result": docs_res.message
         })
         transcript = (
@@ -298,14 +382,22 @@ def simulate_voice_agent_call(
         transcript=transcript,
         tool_calls=tools_executed,
         appointment_id=apt_id,
-        db=db
+        db=db,
+        dynamic_variables=json.dumps(initial_vars)
     )
     return log
 
 
 @router.post("/create-web-call")
-async def create_web_call(db: Session = Depends(get_db)):
-    """Generate a WebRTC access token from Retell AI for direct browser-to-agent voice calls."""
+async def create_web_call(
+    payload: Optional[CreateWebCallRequest] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate a WebRTC access token from Retell AI for direct browser-to-agent voice calls.
+    Explicitly passes initial known facts (patient, doctor, slot, clinic) as
+    Retell LLM dynamic variables, and initializes server-side conversation state.
+    """
     api_key = settings.RETELL_API_KEY
     agent_id = settings.RETELL_AGENT_ID
     if not api_key or not agent_id:
@@ -313,14 +405,43 @@ async def create_web_call(db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="RETELL_API_KEY and RETELL_AGENT_ID must be configured in backend/.env"
         )
-    
+
+    # 1. Format and sanitize dynamic variables
+    req = payload or CreateWebCallRequest()
+    doc_id = req.selected_doctor_id
+    doc_name = req.selected_doctor_name
+    if doc_id and not doc_name:
+        doc_record = db.get(Doctor, doc_id)
+        if doc_record:
+            doc_name = doc_record.name
+
+    patient_name = req.patient_name.strip() if req.patient_name else "Valued Patient"
+    patient_phone = req.patient_phone.strip() if req.patient_phone else "+1-555-019-8822"
+    clinic_name = req.clinic_name or "2care Clinical Command Center"
+
+    dynamic_vars = {
+        "customer_name": patient_name,
+        "patient_name": patient_name,
+        "patient_id": req.patient_id or "",
+        "patient_phone": patient_phone,
+        "selected_doctor_id": doc_id or "",
+        "selected_doctor_name": doc_name or "",
+        "selected_slot_id": req.selected_slot_id or "",
+        "selected_date": req.selected_date or "",
+        "clinic_name": clinic_name
+    }
+
     try:
         import httpx
         async with httpx.AsyncClient(timeout=15.0) as client:
+            retell_body = {
+                "agent_id": agent_id,
+                "retell_llm_dynamic_variables": dynamic_vars
+            }
             res = await client.post(
                 "https://api.retellai.com/v2/create-web-call",
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={"agent_id": agent_id}
+                json=retell_body
             )
             if res.status_code not in (200, 201):
                 logger.error(f"Retell create-web-call returned error: {res.text}")
@@ -328,21 +449,26 @@ async def create_web_call(db: Session = Depends(get_db)):
             data = res.json()
             call_id = data.get("call_id")
             if call_id:
+                # Initialize server conversation state keyed by call_id
+                get_or_create_call_state(call_id=call_id, db=db, initial_vars=dynamic_vars)
                 try:
                     record_call_log(
                         call_id=call_id,
-                        caller_phone="Patient Web Portal",
+                        caller_phone=patient_phone,
                         agent_id=agent_id,
                         direction="inbound",
                         duration_seconds=0,
                         status="in_progress",
-                        transcript="Call initiated in Patient Portal. Live audio session active.",
+                        transcript=f"Call initiated in Patient Portal for {patient_name}. Live audio session active.",
                         tool_calls=[],
                         appointment_id=None,
-                        db=db
+                        db=db,
+                        dynamic_variables=json.dumps(dynamic_vars)
                     )
                 except Exception as db_err:
                     logger.warning(f"Failed to record initial in-progress call log: {db_err}")
+
+            data["dynamic_variables"] = dynamic_vars
             return data
     except HTTPException:
         raise

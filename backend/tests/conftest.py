@@ -108,3 +108,13 @@ def client():
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def db_session():
+    """Isolated database session for tests to query and assert DB state directly."""
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
